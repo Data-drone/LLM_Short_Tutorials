@@ -100,36 +100,42 @@ testing_prompts = pd.DataFrame(
 
 # DBTITLE 1,Eval Function
 
-# TODO - Fix the eval function
-def eval_pipe(inputs):
-    answers = []
-    for index, row in inputs.iterrows():
-        
-        
-        message_structure = {
-            "messages": [
-                {
-                    "role": "system",
-                    "content": f"{system_prompt}"},
-                 {
-                     "role": "user",
-                     "content": f"{row.item()}"
-                 }
-            ]
-        }
+class EvalObj:
 
-        full_prompt = {**message_structure, **hyper_params}
+    def __init__(self, system_prompt, hyper_parms):
+
+        self.system_prompt = system_prompt
+        self.hyper_parms = hyper_parms
+
+    def eval_pipe(self, inputs):
+        answers = []
+        for index, row in inputs.iterrows():
+            
+            message_structure = {
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": f"{self.system_prompt}"},
+                    {
+                        "role": "user",
+                        "content": f"{row.item()}"
+                    }
+                ]
+            }
+
+            full_prompt = {**message_structure, **self.hyper_parms}
+            
+            result = requests.post(
+                url=endpoint_name, json=full_prompt, headers=headers
+            )
+
+            parse_response = json.loads(result.text)
+            print(type(parse_response))
+
+            answer = parse_response['choices'][0]['message']['content']
+            answers.append(answer)
         
-        result = requests.post(
-            url=endpoint_name, json=full_prompt, headers=headers
-        )
-
-        parse_response = json.loads(result.text)
-
-        answer = parse_response['choices'][0]['message']['content']
-        answers.append(answer)
-    
-    return answers
+        return answers
 
 # COMMAND ----------
 
@@ -140,11 +146,13 @@ for system_prompt in system_prompt_list:
         hyper_params = {'system_prompt': system_prompt, 'max_tokens': 128}
         mlflow.log_params(hyper_params)
 
+        eval_obj = EvalObj(system_prompt=system_prompt,
+                           hyper_parms={'max_tokens': 128})
+
         results = mlflow.evaluate(
-                eval_pipe,
+                eval_obj.eval_pipe,
                 data = testing_prompts,
-                model_type='text',
-                extra_metrics=[mlflow.metrics.latency()],
+                model_type='text'
             )
     
 # COMMAND ----------
