@@ -1,5 +1,5 @@
 import gradio as gr
-from langchain.chat_models import ChatDatabricks
+from langchain_community.chat_models import ChatDatabricks
 from langchain.schema import AIMessage, HumanMessage
 
 chat_model = 'mistral_7b_model'
