@@ -6,19 +6,36 @@
 # MAGIC In this short tutorial we will ping a databricks endpoint and run some prompting exercises
 # MAGIC
 # MAGIC Once we are sure it is working, we can extend this on log them to MLflow
+# MAGIC
+# MAGIC **Notes**
+# MAGIC - The mistral model does not accept system prompt type. If just doing simple prompting it is not a problem advanced methods may require this and cause errors
+# MAGIC
 
 # COMMAND ----------
 
 # MAGIC %md # Validate Endpoint Working
+# MAGIC
+# MAGIC Lets first validate that the endpoints are working
 
 # COMMAND ----------
 
 # DBTITLE 1,Setup Connection
 
 # databricks endpoint uri
-endpoint_name = 'https://e2-demo-west.cloud.databricks.com/serving-endpoints/databricks-llama-2-70b-chat/invocations'
 
-# security settings
+# This gets the current workspace uri assuming that we are not querying cross workspace
+databricks_workspace_uri = spark.conf.get("spark.databricks.workspaceUrl")
+
+# this is the name of the endpoint in model serving page
+model_name = 'databricks-dbrx-instruct'
+
+endpoint_name = f'https://{databricks_workspace_uri}/serving-endpoints/{model_name}/invocations'
+
+# To hit an endpoint we need a token
+# This pulls the current Notebook session token
+# NOTE this only works in current workspace and assumes user has access to the model serving endpoint
+# For production use a token created as a secret instead
+# dbutils.secrets.get(scope=secret_scope, key=secret_key)
 db_token = dbutils.notebook.entry_point.getDbutils().notebook().getContext().apiToken().get()
 
 # COMMAND ----------
@@ -65,6 +82,8 @@ print(parse_response['choices'][0]['message']['content'])
 # COMMAND ----------
 
 # MAGIC %md # Add MLflow logging
+# MAGIC
+# MAGIC We can log prompt experiments into mlflow with the following code
 
 # COMMAND ----------
 
