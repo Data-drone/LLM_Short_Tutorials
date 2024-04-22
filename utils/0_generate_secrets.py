@@ -21,6 +21,8 @@ scopes = w.secrets.list_scopes()
 # COMMAND ----------
 
 scopes 
+# to review easier
+[x.name for x in scopes]
 
 # COMMAND ----------
 
