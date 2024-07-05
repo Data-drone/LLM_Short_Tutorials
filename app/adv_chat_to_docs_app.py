@@ -87,7 +87,7 @@ rag_prompt = PromptTemplate(input_variables=['context', 'input', 'chat_history']
 #rag_runnable = rag_prompt | llm
 
 chain = (
-    {'context': history_aware_retriever | format_docs, "question": RunnablePassthrough(), "history": RunnablePassthrough()}
+    {'context': history_aware_retriever | format_docs, "input": RunnablePassthrough(), "chat_history": RunnablePassthrough()}
     | rag_prompt
     | llm 
     | StrOutputParser()

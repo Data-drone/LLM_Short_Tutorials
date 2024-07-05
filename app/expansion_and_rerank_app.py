@@ -107,7 +107,7 @@ def predict(message, history):
         history_langchain_format.append(HumanMessage(content=human))
         history_langchain_format.append(AIMessage(content=ai))
     history_langchain_format.append(HumanMessage(content=message))
-    gpt_response = chain.invoke({"question": message, "history": history_langchain_format})
+    gpt_response = chain.invoke({"input": message, "chat_history": history_langchain_format})
     return gpt_response #.content
 
 
