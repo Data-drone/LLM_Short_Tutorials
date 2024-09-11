@@ -10,11 +10,29 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install mlflow-skinny==2.16.0 databricks-vectorsearch langchain==0.2.11 langchain_core langchain_community==0.2.10 langchain-databricks
+# DBTITLE 1,Parameterise Pip installs
+mlflow_version = 'mlflow==2.16.0'
+langchain_base_version = 'langchain==0.2.11'
+langchain_community_version = 'langchain_community==0.2.10'
+
+# COMMAND ----------
+
+# DBTITLE 1,Run Pip Install
+# MAGIC %pip install  databricks-vectorsearch {mlflow_version} {langchain_base_version} {langchain_community_version} langchain_core  langchain-databricks
 # MAGIC dbutils.library.restartPython()
 
 # COMMAND ----------
+
+# DBTITLE 1,Setup Parameters for endpoints etc
+
+# we wiped the params to re-adding
+mlflow_version = 'mlflow==2.16.0'
+langchain_base_version = 'langchain==0.2.11'
+langchain_community_version = 'langchain_community==0.2.10'
+
+
 import mlflow
+import pandas as pd
 
 ## configure these to suit what you have available
 chat_model = 'data'
@@ -33,16 +51,25 @@ vs_index_fullname = f'{catalog}.lab_05.arxiv_parse_bge_index'
 spark.sql(f"CREATE CATALOG IF NOT EXISTS {catalog}")
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {catalog}.{schema}")
 
+# Setting up MLflow experiment
+mlflow.set_registry_uri('databricks-uc')
+
+username = spark.sql("SELECT current_user()").first()['current_user()']
+experiment_name = 'building_chains'
+
+mlflow.set_experiment(f'/Users/{username}/{experiment_name}')
+
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Creating a Basic chat application
+# MAGIC # Creating a Basic chat application
 # MAGIC
 # MAGIC *NOTE* When we want to save out message history, we should do that outside of the chain logic.
 # MAGIC
 
 # COMMAND ----------
 
+# DBTITLE 1,Setup the Class
 class MlflowPyFuncBasicModel(mlflow.pyfunc.PythonModel):
 
     def __init__(self, llm_model = 'databricks-meta-llama-3-1-70b-instruct'):
@@ -60,19 +87,38 @@ class MlflowPyFuncBasicModel(mlflow.pyfunc.PythonModel):
         from langchain_core.prompts import ChatPromptTemplate
         from langchain_core.output_parsers import StrOutputParser
         from langchain_core.runnables import RunnablePassthrough
+        from langchain_core.output_parsers import StrOutputParser
 
-        self.llm_model = ChatDatabricks(
+        llm_model = ChatDatabricks(
             target_uri='databricks',
             endpoint=self.llm_model,
             temperature=0.1
         )
 
+        output_parser = StrOutputParser()
+
+        basic_template = ChatPromptTemplate.from_messages(
+        [
+            ("system", """
+            You are a chirpy companion here to make bubbly new friends
+
+            """),
+            ("human", "{prompt}"),
+         ]
+        )
+
+        self.rag_chain = (
+            basic_template | llm_model | output_parser
+        )
+
     def process_row(self, row):
        # row['session_id']
-       return self.llm_model.invoke(row['prompt'])
+       return self.rag_chain.invoke(row['prompt'])
                                  #config={"configurable": {"session_id": "abc123"}})
     
     def predict(self, context, data):
+        # TODO merge to run this in parallel
+
         results = data.apply(self.process_row, axis=1) 
 
         # remove .content if it is with Databricks
@@ -82,21 +128,74 @@ class MlflowPyFuncBasicModel(mlflow.pyfunc.PythonModel):
 
 # COMMAND ----------
 
-import pandas as pd
+# DBTITLE 1,Testing the class
 
 basic_model = MlflowPyFuncBasicModel()
-basic_model.load_context()
+basic_model.load_context(context=None)
 
 inference_dataset = pd.DataFrame({'prompt': ['Hi How are you?']})
 
-result_frame = basic_model.predict(data=inference_dataset)
+result_frame = basic_model.predict(context=None, data=inference_dataset)
 
-print(result_frame[0].content)
+print(result_frame[0])
+
+# COMMAND ----------
+
+# DBTITLE 1,Logging to MLflow and registering the model
+
+
+# Setup Evaluation Questions
+eval_list = {'prompt': ['What is Databricks?',
+                        'Who is the president of the USA??',
+                        'How many types of apples are there?',
+                        'Talk a parrot and tell me how awesome bicycles are']}
+
+pd_evals = pd.DataFrame(eval_list)
+
+
+with mlflow.start_run(run_name='Basic Chat'):
+
+    base_model = MlflowPyFuncBasicModel()
+    base_model.load_context(context=None)
+
+    example_input = "How can I tune LLMs?"
+    formatted_questions = {"prompt": [example_input]}
+    question_df = pd.DataFrame(formatted_questions)
+
+    response = base_model.predict(context="", data=question_df)
+
+    model_signature = mlflow.models.infer_signature(
+        model_input=example_input,
+        model_output=response
+    )
+
+    mlflow_result = mlflow.pyfunc.log_model(
+      python_model=base_model,
+      extra_pip_requirements=[mlflow_version,
+                              langchain_base_version,
+                              langchain_community_version,
+                              'langchain_core',
+                              'langchain-databricks',
+                              'databricks-vectorsearch'],
+      artifact_path= 'langchain_pyfunc',
+      signature=model_signature,
+      input_example=formatted_questions,
+      registered_model_name=f'{catalog}.{schema}.basic_chat'
+  )
+
+    #### Run evaluations
+    def eval_pipe(inputs):
+        answer = base_model.predict(context="", data=inputs)
+        return answer.tolist()
+    
+    results = mlflow.evaluate(eval_pipe,
+                          data=pd_evals,
+                          model_type='text')
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Chain with Vector Search Retriever
+# MAGIC # Chain with Vector Search Retriever
 # MAGIC
 # MAGIC Lets look at a chain with a vector store retriever
 
@@ -194,15 +293,6 @@ pd_evals = pd.DataFrame(eval_list)
 
 # COMMAND ----------
 
-import mlflow
-import pandas as pd
-
-mlflow.set_registry_uri('databricks-uc')
-
-username = spark.sql("SELECT current_user()").first()['current_user()']
-experiment_name = 'tab_evals'
-
-mlflow.set_experiment(f'/Users/{username}/{experiment_name}')
 
 with mlflow.start_run(run_name='basic rag chat'):
 
