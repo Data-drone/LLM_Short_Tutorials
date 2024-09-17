@@ -12,13 +12,13 @@
 
 # DBTITLE 1,Parameterise Pip installs
 mlflow_version = 'mlflow==2.16.0'
-langchain_base_version = 'langchain==0.2.11'
-langchain_community_version = 'langchain_community==0.2.10'
+langchain_base_version = 'langchain'
+langchain_community_version = 'langchain_community==0.2.13'
 
 # COMMAND ----------
 
 # DBTITLE 1,Run Pip Install
-# MAGIC %pip install  {mlflow_version} {langchain_base_version} {langchain_community_version} langchain_core  langchain-databricks
+# MAGIC %pip install  {mlflow_version} {langchain_base_version} {langchain_community_version} langchain_core langgraph langchain-databricks
 # MAGIC dbutils.library.restartPython()
 
 # COMMAND ----------
@@ -27,9 +27,8 @@ langchain_community_version = 'langchain_community==0.2.10'
 
 # we wiped the params to re-adding
 mlflow_version = 'mlflow==2.16.0'
-langchain_base_version = 'langchain==0.2.11'
-langchain_community_version = 'langchain_community==0.2.10'
-
+langchain_base_version = 'langchain'
+langchain_community_version = 'langchain_community==0.2.13'
 
 import mlflow
 import pandas as pd
@@ -37,7 +36,7 @@ import pandas as pd
 ## configure these to suit what you have available
 chat_model = 'data'
 
-llm_model_name = 'databricks-dbrx-instruct'
+llm_model_name = 'databricks-meta-llama-3-1-70b-instruct'
 embedding_model = 'databricks-bge-large-en'
 
 catalog = 'brian_gen_ai'
@@ -174,12 +173,13 @@ with mlflow.start_run(run_name='Basic Chat'):
       extra_pip_requirements=[mlflow_version,
                               langchain_base_version,
                               langchain_community_version,
+                              'langgraph',
                               'langchain_core',
                               'langchain-databricks',
                               'databricks-vectorsearch'],
       artifact_path= 'langchain_pyfunc',
       signature=model_signature,
-      input_example=formatted_questions,
+      input_example=question_df,
       registered_model_name=f'{catalog}.{schema}.basic_chat'
   )
 
@@ -207,7 +207,7 @@ from mlflow.models import infer_signature
 
 llm_model = ChatDatabricks(
             target_uri='databricks',
-            endpoint='databricks-dbrx-instruct',
+            endpoint='databricks-meta-llama-3-1-70b-instruct',
             temperature=0.1
         )
 output_parser = StrOutputParser()
@@ -253,7 +253,7 @@ with mlflow.start_run(run_name='test_langchain'):
 # We need to create a custom pyfunc to hold the logic
 class MlflowLangchainwVectorStore(mlflow.pyfunc.PythonModel):
 
-    def __init__(self, llm_model = 'databricks-dbrx-instruct', 
+    def __init__(self, llm_model = 'databricks-meta-llama-3-1-70b-instruct', 
                  embedding_model = 'databricks-bge-large-en',
                  endpoint = 'one-env-shared-endpoint-5',
                  catalog = 'brian_gen_ai',
@@ -271,10 +271,10 @@ class MlflowLangchainwVectorStore(mlflow.pyfunc.PythonModel):
     def load_context(self, context):
 
         from langchain_community.chat_models import ChatDatabricks
-        from langchain_community.embeddings import DatabricksEmbeddings
         from langchain_core.prompts import ChatPromptTemplate
         from langchain_core.output_parsers import StrOutputParser
 
+        from langchain_community.embeddings import DatabricksEmbeddings
         from databricks.vector_search.client import VectorSearchClient
         from langchain_community.vectorstores import DatabricksVectorSearch
         from langchain_core.runnables import RunnablePassthrough
@@ -309,7 +309,7 @@ class MlflowLangchainwVectorStore(mlflow.pyfunc.PythonModel):
 
             """),
             ("human", "{user_input}"),
-         ]
+         ] 
         )
         output_parser = StrOutputParser()
 
@@ -342,7 +342,7 @@ pd_evals = pd.DataFrame(eval_list)
 
 # test the chain
 rag_model = MlflowLangchainwVectorStore(
-  llm_model = 'databricks-dbrx-instruct', 
+  llm_model = 'databricks-meta-llama-3-1-70b-instruct', 
   embedding_model = 'databricks-bge-large-en',
   endpoint = 'one-env-shared-endpoint-5',
   catalog = 'brian_gen_ai',
@@ -364,7 +364,7 @@ print(response[0])
 with mlflow.start_run(run_name='basic rag chat'):
 
     base_model = MlflowLangchainwVectorStore(
-        llm_model = 'databricks-dbrx-instruct', 
+        llm_model = 'databricks-meta-llama-3-1-70b-instruct', 
         embedding_model = 'databricks-bge-large-en',
         endpoint = 'one-env-shared-endpoint-5',
         catalog = 'brian_gen_ai',
@@ -389,6 +389,7 @@ with mlflow.start_run(run_name='basic rag chat'):
       extra_pip_requirements=[mlflow_version,
                               langchain_base_version,
                               langchain_community_version,
+                              'langgraph',
                               'langchain_core',
                               'langchain-databricks',
                               'databricks-vectorsearch'],
@@ -498,5 +499,183 @@ with mlflow.start_run(run_name='test_langchain_vs'):
 # MAGIC # Chain with Agent Search
 # MAGIC
 # MAGIC Lets look at an Agent Chain
+# MAGIC
+# MAGIC For Agent Chain will use Langchain Agent constructs to start\
+# MAGIC Perhaps progressing to langgraph later?
+# MAGIC
+# MAGIC 
+
+# COMMAND ----------
+
+# DBTITLE 1,Creating PyFunc
+class MlflowPyFuncAgentModel(mlflow.pyfunc.PythonModel):
+
+    def __init__(self, llm_model = 'databricks-meta-llama-3-1-70b-instruct'):
+        
+        """
+        The init function is purely to allow for flexibility in initialising and testing
+        It is not needed in the PyFunc spec 
+        """
+
+        self.llm_model = llm_model
+
+    def _create_db_retriever(self,
+                             endpoint,
+                             index,
+                             embedding_model,
+                             text_col = "page_content",
+                             retrieve_columns = ["source_doc"]):
+        
+        from langchain_community.embeddings import DatabricksEmbeddings
+        from databricks.vector_search.client import VectorSearchClient
+        from langchain_community.vectorstores import DatabricksVectorSearch
+
+        embeddings = DatabricksEmbeddings(endpoint=embedding_model)
+
+        vsc = VectorSearchClient()
+        index = vsc.get_index(endpoint_name=endpoint,
+                              index_name=index)
+
+        retriever = DatabricksVectorSearch(
+                index, text_column=text_col, 
+                embedding=embedding_model, columns=retrieve_columns
+            ).as_retriever()
+
+        return retriever
+
+    def load_context(self, context):
+
+        from langchain_community.chat_models import ChatDatabricks
+        from langchain.agents.agent_toolkits import create_retriever_tool
+        from langchain_core.prompts import ChatPromptTemplate
+        from langchain.agents import AgentExecutor, create_tool_calling_agent
+
+        tool_model = ChatDatabricks(
+            target_uri='databricks',
+            endpoint=self.llm_model,
+            temperature=0.1
+        )
+
+        arxiv_retriever = self._create_db_retriever(
+            endpoint='one-env-shared-endpoint-5',
+            index='brian_gen_ai.lab_05.arxiv_parse_bge_index',
+            embedding_model='databricks-bge-large-en'
+        )
+        arxiv_tool = create_retriever_tool(arxiv_retriever,
+                                           'Vector Search Tool for Arxiv',
+                                           """this tool contains a vector search for a series of
+                                           arsiv articles curated to cover RAG topics and misc LLM things
+                                           """)
+
+        tools = [arxiv_tool]
+
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                ("system", "You are a helpful assistant"),
+                ("human", "{input}"),
+                # Placeholders fill up a **list** of messages
+                ("placeholder", "{agent_scratchpad}"),
+            ]
+        )
+
+        agent = create_tool_calling_agent(tool_model, tools, prompt)
+        self.agent_executor = AgentExecutor(agent=agent, tools=tools)
+
+
+    def process_row(self, row):
+       # row['session_id']
+       return self.agent_executor.invoke({"input": row['prompt']})['output']
+                                 #config={"configurable": {"session_id": "abc123"}})
+    
+    def predict(self, context, data):
+        results = data.apply(self.process_row, axis=1) 
+
+        # remove .content if it is with Databricks
+        results_text = results.apply(lambda x: x)
+        return results_text
+
+# COMMAND ----------
+   
+# DBTITLE 1,Testing PyFunc
+tool_agent = MlflowPyFuncAgentModel('databricks-meta-llama-3-1-70b-instruct')
+tool_agent.load_context(context="")
+
+prompt = 'How can I use RAG?'
+formatted_questions = {"prompt": [prompt, 'What is a thing?']}
+question_df = pd.DataFrame(formatted_questions)
+
+result = tool_agent.predict(context="", data=question_df)
+print(result[0])
+
+# COMMAND ----------
+
+# DBTITLE 1,Logging and Registering Agent PyFunc 
+with mlflow.start_run(run_name='Agent PyFunc'):
+
+    model_signature = mlflow.models.infer_signature(
+        model_input=prompt,
+        model_output=result
+    )
+
+    mlflow.langchain.autolog()
+
+    mlflow.pyfunc.log_model(
+        python_model = tool_agent,
+        extra_pip_requirements=[mlflow_version,
+                              langchain_base_version,
+                              langchain_community_version,
+                              'langgraph',
+                              'langchain_core',
+                              'langchain-databricks',
+                              'databricks-vectorsearch'],
+        artifact_path= 'langchain_pyfunc',
+        signature=model_signature,
+        input_example=question_df,
+        registered_model_name=f'{catalog}.{schema}.agent_chat'
+    )
+
+# COMMAND ----------
+
+# DBTITLE 1,Base Example Case
+from langchain_core.tools import tool
+from langchain_community.tools.databricks import UCFunctionToolkit
+from langchain_community.chat_models import ChatDatabricks
+
+#model = ChatOpenAI(model="gpt-4o")
+model = ChatDatabricks(
+            target_uri='databricks',
+            endpoint=llm_model_name,
+            temperature=0.1
+        )
+
+@tool
+def magic_function(input: int) -> int:
+    """Applies a magic function to an input."""
+    return input + 2
+
+
+tools = [magic_function]
+
+
+query = "what is the value of magic_function(3)?"
+
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain.agents.agent_toolkits import create_retriever_tool
+
+prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", "You are a helpful assistant"),
+        ("human", "{input}"),
+        # Placeholders fill up a **list** of messages
+        ("placeholder", "{agent_scratchpad}"),
+    ]
+)
+
+
+agent = create_tool_calling_agent(model, tools, prompt)
+agent_executor = AgentExecutor(agent=agent, tools=tools)
+
+agent_executor.invoke({"input": query})
 
 # COMMAND ----------

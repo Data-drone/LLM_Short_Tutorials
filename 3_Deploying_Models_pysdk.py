@@ -23,8 +23,11 @@ mlflow_version = 'mlflow==2.16.0'
 
 # we wiped the params to re-adding
 mlflow_version = 'mlflow==2.16.0'
-UC_MODEL_NAME = 'brian_gen_ai.chain_types.basic_chat'
-model_version = 5
+UC_CATALOG = 'brian_gen_ai'
+UC_SCHEMA = 'chain_types'
+
+username = spark.sql("SELECT current_user()").first()['current_user()']
+parsed_name = username.split("@")[0].replace(".", "_")
 
 # COMMAND ----------
 
@@ -53,6 +56,9 @@ databricks_workspace_url = spark.conf.get("spark.databricks.workspaceUrl")
 # COMMAND ----------
 
 # DBTITLE 1,Basic Chat Chain
+UC_MODEL_NAME = f'{UC_CATALOG}.{UC_SCHEMA}.basic_chat'
+model_version = 5
+
 endpoint_config = EndpointCoreConfigInput(
     served_entities=[
         ServedEntityInput(
@@ -69,13 +75,13 @@ endpoint_config = EndpointCoreConfigInput(
 )
 
 endpoint = w.serving_endpoints.create_and_wait(
-    name='brian_test',
+    name=f'{parsed_name}_basic_chat',
     config=endpoint_config)
 
 # COMMAND ----------
 
 # DBTITLE 1,Retriever Chain
-UC_MODEL_NAME = 'brian_gen_ai.chain_types.rag_chat'
+UC_MODEL_NAME = f'{UC_CATALOG}.{UC_SCHEMA}.rag_chat'
 model_version = 1
 
 endpoint_config = EndpointCoreConfigInput(
@@ -94,13 +100,13 @@ endpoint_config = EndpointCoreConfigInput(
 )
 
 endpoint = w.serving_endpoints.create_and_wait(
-    name='brian_vs_test',
+    name=f'{parsed_name}_rag_chat',
     config=endpoint_config)
 
 # COMMAND ----------
 
 # DBTITLE 1,Retriever Chain - Langchain integration
-UC_MODEL_NAME = 'brian_gen_ai.chain_types.langchain_vs_module'
+UC_MODEL_NAME = f'{UC_CATALOG}.{UC_SCHEMA}.langchain_vs_module'
 model_version = 1
 
 endpoint_config = EndpointCoreConfigInput(
@@ -119,5 +125,30 @@ endpoint_config = EndpointCoreConfigInput(
 )
 
 endpoint = w.serving_endpoints.create_and_wait(
-    name='brian_vs_test',
+    name=f'{parsed_name}_rag_langchain',
+    config=endpoint_config)
+
+# COMMAND ----------
+
+# DBTITLE 1,Agent Chain
+UC_MODEL_NAME = f'{UC_CATALOG}.{UC_SCHEMA}.agent_chat'
+model_version = 1
+
+endpoint_config = EndpointCoreConfigInput(
+    served_entities=[
+        ServedEntityInput(
+            entity_name = UC_MODEL_NAME,
+            entity_version = model_version,
+            workload_size = 'Small',
+            scale_to_zero_enabled = True,
+            environment_vars={
+                "DATABRICKS_HOST": f"https://{databricks_workspace_url}",
+                "DATABRICKS_TOKEN": create_databricks_token(w)
+            }
+        )
+    ]
+)
+
+endpoint = w.serving_endpoints.create_and_wait(
+    name=f'{parsed_name}_rag_agent',
     config=endpoint_config)
