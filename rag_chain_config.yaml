@@ -1,0 +1,8 @@
+resources:
+  llm_model_name: databricks-meta-llama-3-1-70b-instruct
+  embedding_model: databricks-bge-large-en
+  vs_endpoint: one-env-shared-endpoint-5
+uc_config:
+  catalog: brian_gen_ai
+  schema: lab_05
+  index_name: arxiv_parse_bge_index
