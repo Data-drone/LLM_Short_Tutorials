@@ -112,16 +112,12 @@ class MlflowPyFuncBasicModel(mlflow.pyfunc.PythonModel):
         )
 
     def process_row(self, row):
-       # row['session_id']
-       return self.rag_chain.invoke(row['prompt'])
-                                 #config={"configurable": {"session_id": "abc123"}})
+        return self.rag_chain.invoke(row['prompt'])
     
     def predict(self, context, data):
         # TODO merge to run this in parallel
 
         results = data.apply(self.process_row, axis=1) 
-
-        # remove .content if it is with Databricks
         results_text = results.apply(lambda x: x)
         return results_text
 
@@ -319,14 +315,10 @@ class MlflowLangchainwVectorStore(mlflow.pyfunc.PythonModel):
         )
 
     def process_row(self, row):
-       # row['session_id']
        return self.rag_chain.invoke(row['prompt'])
-                                 #config={"configurable": {"session_id": "abc123"}})
     
     def predict(self, context, data):
         results = data.apply(self.process_row, axis=1) 
-
-        # remove .content if it is with Databricks
         results_text = results.apply(lambda x: x)
         return results_text
         
