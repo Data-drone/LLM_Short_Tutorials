@@ -93,6 +93,7 @@ retriever.invoke("What is a RAG?")
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
+from operator import itemgetter
 
 def format_docs(docs):
             return "\n\n".join(doc.page_content for doc in docs)
@@ -112,12 +113,15 @@ basic_template = ChatPromptTemplate.from_messages(
 output_parser = StrOutputParser()
 
 # Build Rag Chain
+# For consistency we use input as the key of the input json as well.
+# The LCEL code then remaps it to user_input to sent to our basic_template
 rag_chain = (
-            {"rag_content": retriever | format_docs, "user_input": RunnablePassthrough()}
+            {"rag_content": itemgetter("input") | retriever | format_docs, 
+             "user_input": itemgetter("input") | RunnablePassthrough()}
             | basic_template | llm_model | output_parser
         )
 
-rag_chain.invoke("Why do I need RAG techniques?")
+rag_chain.invoke({"input": "Why do I need RAG techniques?"})
 
 # COMMAND ----------
 

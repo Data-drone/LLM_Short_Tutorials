@@ -1,9 +1,9 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC
-# MAGIC # Building and Logging A Basic Chain
+# MAGIC # Logging Model as Code Chains
 # MAGIC
-# MAGIC We will use databricks-agent to recreate the basic chain
+# MAGIC Here we will log models as code
 
 # COMMAND ----------
 
@@ -15,7 +15,7 @@ langchain_community_version = 'langchain_community==0.2.13'
 # COMMAND ----------
 
 # DBTITLE 1,Run Pip Install
-# MAGIC %pip install databricks-agents databricks-sdk {mlflow_version} {langchain_base_version} {langchain_community_version} langchain_core langgraph langchain-databricks
+# MAGIC %pip install databricks-agents databricks-sdk {mlflow_version} {langchain_base_version} {langchain_community_version} langchain_core langgraph langchain-databricks textact
 # MAGIC dbutils.library.restartPython()
 
 # COMMAND ----------
@@ -60,19 +60,19 @@ databricks_workspace_url = spark.conf.get("spark.databricks.workspaceUrl")
 # COMMAND ----------
 
 # DBTITLE 1,Log Model File
-with mlflow.start_run(run_name='base_chain'):
+
+# Note that we use the same input sample as tested in the notebook
+# To ensure smooth API deployment make the input a json
+with mlflow.start_run(run_name='modelfile_base_chain'):
 
     mlflow.set_tag("type", "chain")
 
     logged_chain_info = mlflow.langchain.log_model(
         lc_model=os.path.join(
             os.getcwd(), '4_Building_ModelFile_Base_Chain'
-        ),  # Chain code file e.g., /path/to/the/chain.py
-        #model_config=rag_chain_config,  # Chain configuration set in 00_config
+        ),  
         artifact_path="chain",  # Required by MLflow
-        input_example="How are you today?",  # Save the chain's input schema.  MLflow will execute the chain before logging & capture it's output schema.
-        example_no_conversion=True,  # Required by MLflow to use the input_example as the chain's schema
-        extra_pip_requirements=["databricks-agents"], # TODO: Remove this
+        input_example={"prompt": "How are you today?"},
         registered_model_name=f'{catalog}.{schema}.base_model_file'
     )
 
@@ -121,6 +121,7 @@ endpoint = w.serving_endpoints.create_and_wait(
 import yaml
 import pandas as pd
 
+# We use a couple of test prompts to see how well they perform
 evaluations = pd.DataFrame(
     {'inputs': [
         'What is a RAG?',
@@ -133,7 +134,7 @@ evaluations = pd.DataFrame(
 def eval_pipe(inputs):
 
         def invoke_chain(prompt):
-            return chain.invoke(input= prompt)
+            return chain.invoke(input={'input': prompt})
 
         answers = inputs['inputs'].apply(invoke_chain)
         #answer = chain.invoke(context="", data=inputs)
@@ -156,10 +157,8 @@ with mlflow.start_run(run_name='Rag_chain'):
         ),  # Chain code file e.g., /path/to/the/chain.py
         model_config=model_config,  # Chain configuration set in 00_config
         artifact_path="chain",  # Required by MLflow
-        input_example="How are you today?",  # Save the chain's input schema.  MLflow will execute the chain before logging & capture it's output schema.
-        example_no_conversion=True,  # Required by MLflow to use the input_example as the chain's schema
-        extra_pip_requirements=["databricks-agents"], # TODO: Remove this
-        #registered_model_name=f'{catalog}.{schema}.retrieval_chain_model_file'
+        input_example={"input": "How are you today?"},  # Save the chain's input schema.  MLflow will execute the chain before logging & capture it's output schema.
+        registered_model_name=f'{catalog}.{schema}.retrieval_chain_model_file'
     )
 
     chain = mlflow.langchain.load_model(logged_chain_info.model_uri)
@@ -185,10 +184,8 @@ with mlflow.start_run(run_name='Rag_chain_405b'):
         ),  # Chain code file e.g., /path/to/the/chain.py
         model_config=model_config,  # Chain configuration set in 00_config
         artifact_path="chain",  # Required by MLflow
-        input_example="How are you today?",  # Save the chain's input schema.  MLflow will execute the chain before logging & capture it's output schema.
-        example_no_conversion=True,  # Required by MLflow to use the input_example as the chain's schema
-        extra_pip_requirements=["databricks-agents"], # TODO: Remove this
-        #registered_model_name=f'{catalog}.{schema}.retrieval_chain_model_file'
+        input_example={"input": "How are you today?"},  # Save the chain's input schema.  MLflow will execute the chain before logging & capture it's output schema.
+        registered_model_name=f'{catalog}.{schema}.retrieval_chain_model_file'
     )
 
     chain = mlflow.langchain.load_model(logged_chain_info.model_uri)

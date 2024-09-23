@@ -73,7 +73,9 @@ rag_chain = (
 
 # DBTITLE 1,test Chain
 
-rag_chain.invoke("test")
+# Our rag chain template uses the parameter prompt so we can use that in our invoke
+# This will also become part of the input signature for logging
+rag_chain.invoke({"prompt": "test"})
 
 # COMMAND ----------
 
