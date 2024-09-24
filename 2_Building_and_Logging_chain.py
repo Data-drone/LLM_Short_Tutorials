@@ -87,7 +87,6 @@ class MlflowPyFuncBasicModel(mlflow.pyfunc.PythonModel):
         from langchain_core.prompts import ChatPromptTemplate
         from langchain_core.output_parsers import StrOutputParser
         from langchain_core.runnables import RunnablePassthrough
-        from langchain_core.output_parsers import StrOutputParser
 
         llm_model = ChatDatabricks(
             target_uri='databricks',
@@ -553,10 +552,20 @@ class MlflowPyFuncAgentModel(mlflow.pyfunc.PythonModel):
             index='brian_gen_ai.lab_05.arxiv_parse_bge_index',
             embedding_model='databricks-bge-large-en'
         )
+
+        # the annotation has a big effect - we use an LLM to summarise and create our description to be more descriptive
         arxiv_tool = create_retriever_tool(arxiv_retriever,
-                                           'Vector Search Tool for Arxiv',
-                                           """this tool contains a vector search for a series of
-                                           arsiv articles curated to cover RAG topics and misc LLM things
+                                           'Vector Search Tool for task tuning Large language models',
+                                           """This tool encompasses research on adapting and applying large language models to perform specific tasks or follow instructions in various domains. 
+                                           It includes work on aligning language models with human intent, grounding language in real-world capabilities, using language models for control and decision-making, 
+                                           and evaluating their performance on diverse NLP tasks.
+                                            
+                                            Key aspects of papers in this category:
+                                            Instruction Following: Research on training language models to better understand and execute user instructions or commands.
+                                            Embodied AI: Studies exploring the integration of language models with robotic systems or physical world interactions.
+                                            Task Generalization: Investigations into the ability of language models to adapt to and solve a wide range of NLP tasks without specific fine-tuning.
+                                            Human Alignment: Methods for improving language model outputs to better match human preferences and intentions.
+                                            Practical Applications: Focus on using language models for real-world problem-solving, decision-making, or control tasks.
                                            """)
 
         tools = [arxiv_tool]

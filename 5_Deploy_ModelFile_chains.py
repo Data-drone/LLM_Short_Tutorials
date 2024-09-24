@@ -15,7 +15,7 @@ langchain_community_version = 'langchain_community==0.2.13'
 # COMMAND ----------
 
 # DBTITLE 1,Run Pip Install
-# MAGIC %pip install databricks-agents databricks-sdk {mlflow_version} {langchain_base_version} {langchain_community_version} langchain_core langgraph langchain-databricks textact
+# MAGIC %pip install -U pydantic>2.0.0 databricks-sdk {mlflow_version} {langchain_base_version} {langchain_community_version} langchain_core langgraph langchain-databricks
 # MAGIC dbutils.library.restartPython()
 
 # COMMAND ----------
@@ -193,3 +193,55 @@ with mlflow.start_run(run_name='Rag_chain_405b'):
     results = mlflow.evaluate(eval_pipe,
                           data=evaluations,
                           model_type='text')
+
+# COMMAND ----------
+
+# DBTITLE 1,Agent RAG
+with mlflow.start_run(run_name='Agent RAG w langgraph'):
+     
+    mlflow.set_tag("type", "chain")
+
+    # Load the model config into a dict
+    with open('rag_chain_config.yaml', 'r') as file:
+        model_config = yaml.safe_load(file)
+
+    logged_chain_info = mlflow.langchain.log_model(
+        lc_model=os.path.join(
+            os.getcwd(), '4b_Build_ModelFile_Agent_Chain'
+        ),  # Chain code file e.g., /path/to/the/chain.py
+        model_config=model_config,  # Chain configuration set in 00_config
+        artifact_path="chain",  # Required by MLflow
+        input_example={"input": "How are you today?"},  # Save the chain's input schema.  MLflow will execute the chain before logging & capture it's output schema.
+        registered_model_name=f'{catalog}.{schema}.agent_modelfile_chain'
+    )
+
+    chain = mlflow.langchain.load_model(logged_chain_info.model_uri)
+
+    results = mlflow.evaluate(eval_pipe,
+                          data=evaluations,
+                          model_type='text')
+    
+# COMMAND ----------
+
+# DBTITLE 1,Deploy Agent RAG
+UC_MODEL_NAME = f'{catalog}.{schema}.agent_modelfile_chain'
+model_version = 1
+
+endpoint_config = EndpointCoreConfigInput(
+    served_entities=[
+        ServedEntityInput(
+            entity_name = UC_MODEL_NAME,
+            entity_version = model_version,
+            workload_size = 'Small',
+            scale_to_zero_enabled = True,
+            environment_vars={
+                "DATABRICKS_HOST": f"https://{databricks_workspace_url}",
+                "DATABRICKS_TOKEN": create_databricks_token(w)
+            }
+        )
+    ]
+)
+
+endpoint = w.serving_endpoints.create_and_wait(
+    name=f'{parsed_name}_agent_mf_chat',
+    config=endpoint_config)

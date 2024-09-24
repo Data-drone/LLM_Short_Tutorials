@@ -15,7 +15,7 @@ langchain_community_version = 'langchain_community==0.2.13'
 # COMMAND ----------
 
 # DBTITLE 1,Run Pip Install
-# MAGIC %pip install databricks-agents {mlflow_version} {langchain_base_version} {langchain_community_version} langchain_core langgraph langchain-databricks
+# MAGIC %pip install {mlflow_version} {langchain_base_version} {langchain_community_version} langchain_core langgraph langchain-databricks
 # MAGIC dbutils.library.restartPython()
 
 # COMMAND ----------
