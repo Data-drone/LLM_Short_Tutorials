@@ -9,13 +9,11 @@
 
 # DBTITLE 1,Parameterise Pip installs
 mlflow_version = 'mlflow==2.16.2'
-langchain_base_version = 'langchain'
-langchain_community_version = 'langchain_community==0.2.13'
 
 # COMMAND ----------
 
 # DBTITLE 1,Run Pip Install
-# MAGIC %pip install {mlflow_version} {langchain_base_version} {langchain_community_version} langchain_core langgraph langchain-databricks
+# MAGIC %pip install -U langchain_databricks {mlflow_version} langchain_core--0.2.39 langchain-databricks==0.1.0
 # MAGIC dbutils.library.restartPython()
 
 # COMMAND ----------

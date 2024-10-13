@@ -245,3 +245,5 @@ endpoint_config = EndpointCoreConfigInput(
 endpoint = w.serving_endpoints.create_and_wait(
     name=f'{parsed_name}_agent_mf_chat',
     config=endpoint_config)
+
+# COMMAND ----------

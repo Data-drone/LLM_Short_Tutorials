@@ -23,7 +23,6 @@ langchain_community_version = 'langchain_community==0.2.13'
 # COMMAND ----------
 
 # DBTITLE 1,Config Management
-
 import mlflow
 
 # We will use ModelConfig for config management
