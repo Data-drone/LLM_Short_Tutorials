@@ -1,0 +1,11 @@
+command: [
+  "python",
+  "app.py"
+]
+
+env:
+  - name: "HF_TOKEN"
+    valueFrom: "hf_token"
+
+  - name: "ACCESS_TOKEN"
+    valueFrom: "access_token"
