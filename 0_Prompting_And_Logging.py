@@ -3,13 +3,12 @@
 # MAGIC
 # MAGIC # Prompting And Logging
 # MAGIC
-# MAGIC In this short tutorial we will ping a databricks endpoint and run some prompting exercises
-# MAGIC
-# MAGIC Once we are sure it is working, we can extend this on log them to MLflow
-# MAGIC
-# MAGIC **Notes**
-# MAGIC - The mistral model does not accept system prompt type. If just doing simple prompting it is not a problem advanced methods may require this and cause errors
-# MAGIC
+# MAGIC In this short tutorial we will: 
+# MAGIC - setup OpenAI client for Databricks endpoints
+# MAGIC - run prompting exercises using standard OpenAI API calls
+# MAGIC - log experiments to MLflow 3.0 with autologging
+# MAGIC - track prompt inputs and model outputs
+
 
 # COMMAND ----------
 
@@ -19,17 +18,21 @@
 
 # COMMAND ----------
 
-# DBTITLE 1,Setup Connection
+%pip install mlflow openai
+dbutils.library.restartPython()
 
-# databricks endpoint uri
+# COMMAND ----------
 
-# This gets the current workspace uri assuming that we are not querying cross workspace
+# DBTITLE 1,Setup OpenAI Client for Databricks
+from openai import OpenAI
+import mlflow
+
+# databricks model
+model_name = 'databricks-gpt-oss-120b'
+
+# get the endpoint
 databricks_workspace_uri = spark.conf.get("spark.databricks.workspaceUrl")
-
-# this is the name of the endpoint in model serving page
-model_name = 'databricks-dbrx-instruct'
-
-endpoint_name = f'https://{databricks_workspace_uri}/serving-endpoints/{model_name}/invocations'
+base_url = f'https://{databricks_workspace_uri}/serving-endpoints'
 
 # To hit an endpoint we need a token
 # This pulls the current Notebook session token
@@ -38,46 +41,37 @@ endpoint_name = f'https://{databricks_workspace_uri}/serving-endpoints/{model_na
 # dbutils.secrets.get(scope=secret_scope, key=secret_key)
 db_token = dbutils.notebook.entry_point.getDbutils().notebook().getContext().apiToken().get()
 
+# Initialize OpenAI client for Databricks
+client = OpenAI(
+    api_key=db_token,
+    base_url=base_url
+)
+
 # COMMAND ----------
 
 # DBTITLE 1,Setting up prompt
 user_prompt = 'tell me a joke'
-
 system_prompt = 'You are a flamboyant assistant who loves saying mate'
 
-full_prompt = {
-    "messages": [
+# COMMAND ----------
+
+# DBTITLE 1,Querying endpoint using OpenAI client
+response = client.chat.completions.create(
+    model=model_name,
+    messages=[
         {
             "role": "system",
-            "content": f"{system_prompt}"},
-         {
-             "role": "user",
-             "content": f"{user_prompt}"
-         }
+            "content": system_prompt
+        },
+        {
+            "role": "user",
+            "content": user_prompt
+        }
     ],
-    "max_tokens": 128
-}
-
-# COMMAND ----------
-
-# DBTITLE 1,Querying endpoint
-import requests
-
-headers = {"Context-Type": "text/json", "Authorization": f"Bearer {db_token}"}
-
-response = requests.post(
-    url=endpoint_name, json=full_prompt, headers=headers
+    max_tokens=128
 )
 
-response.text
-
-# COMMAND ----------
-
-# DBTITLE 1,Properly parsing output
-import json
-
-parse_response = json.loads(response.text)
-print(parse_response['choices'][0]['message']['content'])
+print(response.choices[0].message.content)
 
 # COMMAND ----------
 
@@ -87,8 +81,6 @@ print(parse_response['choices'][0]['message']['content'])
 
 # COMMAND ----------
 
-import mlflow
-
 username = spark.sql("SELECT current_user()").first()['current_user()']
 experiment_path = f'/Users/{username}/basic_prompting'
 
@@ -96,14 +88,8 @@ mlflow.set_experiment(experiment_path)
 
 # COMMAND ----------
 
-# DBTITLE 1,Create Golden Prompts
+# DBTITLE 1,Simple Response Logging with OpenAI Client
 import pandas as pd
-
-system_prompt_list = [
-    'You are a flamboyant assistant who loves saying mate',
-    'You are a traditional learned english gentleman and speak like an aristocrat',
-    'You are a robotic souless automaton and totally analytical and dispassionate'
-]
 
 prompt_list = [
     "what is databricks",
@@ -115,63 +101,43 @@ testing_prompts = pd.DataFrame(
     prompt_list, columns = ['prompt']
 )
 
-# COMMAND ----------
-
-# DBTITLE 1,Eval Function
-
-class EvalObj:
-
-    def __init__(self, system_prompt, hyper_parms):
-
-        self.system_prompt = system_prompt
-        self.hyper_parms = hyper_parms
-
-    def eval_pipe(self, inputs):
-        answers = []
-        for index, row in inputs.iterrows():
-            
-            message_structure = {
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": f"{self.system_prompt}"},
-                    {
-                        "role": "user",
-                        "content": f"{row.item()}"
-                    }
-                ]
-            }
-
-            full_prompt = {**message_structure, **self.hyper_parms}
-            
-            result = requests.post(
-                url=endpoint_name, json=full_prompt, headers=headers
-            )
-
-            parse_response = json.loads(result.text)
-            print(type(parse_response))
-
-            answer = parse_response['choices'][0]['message']['content']
-            answers.append(answer)
-        
-        return answers
-
-# COMMAND ----------
-
-for system_prompt in system_prompt_list:
-    with mlflow.start_run(run_name='experiment_1'):
-
-        #system_prompt = 'You are a flamboyant assistant who loves saying mate'
-        hyper_params = {'system_prompt': system_prompt, 'max_tokens': 128}
-        mlflow.log_params(hyper_params)
-
-        eval_obj = EvalObj(system_prompt=system_prompt,
-                           hyper_parms={'max_tokens': 128})
-
-        results = mlflow.evaluate(
-                eval_obj.eval_pipe,
-                data = testing_prompts,
-                model_type='text'
-            )
+with mlflow.start_run(run_name='basic_prompting'):
     
+    # Enable MLflow autologging for OpenAI
+    mlflow.openai.autolog()
+    
+    # Log parameters
+    mlflow.log_param("system_prompt", system_prompt)
+    mlflow.log_param("max_tokens", 128)
+    mlflow.log_param("model_name", model_name)
+    mlflow.log_param("num_prompts", len(prompt_list))
+    
+    # Process each prompt and log inputs/outputs
+    for i, prompt in enumerate(prompt_list):
+        
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {
+                    "role": "system",
+                    "content": system_prompt
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            max_tokens=128
+        )
+        
+        output = response.choices[0].message.content
+        
+        # Log input and output for each prompt
+        mlflow.log_param(f"input_prompt_{i+1}", prompt)
+        mlflow.log_text(output, f"output_{i+1}.txt")
+        
+        print(f"Prompt {i+1}: {prompt}")
+        print(f"Response: {output}")
+        print("-" * 50)
+
 # COMMAND ----------

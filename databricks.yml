@@ -1,0 +1,29 @@
+# This is a Databricks asset bundle definition for LLM_Short_Tutorials.
+# The Databricks extension requires databricks.yml configuration file.
+# See https://docs.databricks.com/dev-tools/bundles/index.html for documentation.
+
+bundle:
+  name: LLM_Short_Tutorials
+
+targets:
+  dev:
+    mode: development
+    default: false
+    cluster_id: 0405-134210-nmv0cgxq
+    workspace:
+      host: https://e2-demo-field-eng.cloud.databricks.com
+      root_path: /Users/brian.law@databricks.com/.ide/LLM_Short_Tutorials-4aa6722c
+
+  azure-dev:
+    mode: development
+    default: true
+    cluster_id: 1022-051519-jponznnw
+    workspace:
+      host: https://adb-984752964297111.11.azuredatabricks.net
+      root_path: /Users/brian.law@databricks.com/.bundle/LLM_Short_Tutorials
+
+  ## Optionally, there could be 'staging' or 'prod' targets here.
+  #
+  # prod:
+  #   workspace:
+  #     host: https://e2-demo-field-eng.cloud.databricks.com
