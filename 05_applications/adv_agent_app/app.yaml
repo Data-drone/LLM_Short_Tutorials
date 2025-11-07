@@ -1,0 +1,11 @@
+command: [
+  "python",
+  "app.py"
+]
+
+env:
+  - name: "ACCESS_TOKEN"
+    valueFrom: "access_token"
+
+  - name: "endpoint"
+    valueFrom: "serving_endpoint"

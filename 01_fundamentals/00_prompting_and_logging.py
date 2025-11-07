@@ -9,12 +9,12 @@
 # MAGIC - log experiments to MLflow 3.0 with autologging
 # MAGIC - track prompt inputs and model outputs
 
-
 # COMMAND ----------
 
 # MAGIC %md # Validate Endpoint Working
 # MAGIC
-# MAGIC Lets first validate that the endpoints are working
+# MAGIC Lets first validate that the endpoints are working.
+# MAGIC The OpenAI Library is the most popular way of working with LLMs in Python so we will start with that 
 
 # COMMAND ----------
 
@@ -31,14 +31,9 @@ import mlflow
 model_name = 'databricks-gpt-oss-120b'
 
 # get the endpoint
+## To setup the connection we need the workspace url and also an access token 
 databricks_workspace_uri = spark.conf.get("spark.databricks.workspaceUrl")
 base_url = f'https://{databricks_workspace_uri}/serving-endpoints'
-
-# To hit an endpoint we need a token
-# This pulls the current Notebook session token
-# NOTE this only works in current workspace and assumes user has access to the model serving endpoint
-# For production use a token created as a secret instead
-# dbutils.secrets.get(scope=secret_scope, key=secret_key)
 db_token = dbutils.notebook.entry_point.getDbutils().notebook().getContext().apiToken().get()
 
 # Initialize OpenAI client for Databricks
@@ -141,3 +136,12 @@ with mlflow.start_run(run_name='basic_prompting'):
         print("-" * 50)
 
 # COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Expanded Sample
+# MAGIC
+# MAGIC With MLflow 3 there is the ability to log and manage system prompts as well
+# MAGIC
+
+# COMMAND ----------
+

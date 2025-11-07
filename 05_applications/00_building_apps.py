@@ -68,24 +68,24 @@ os.environ['GRADIO_ROOT_PATH'] = f"https://dbc-dp-{org_id}.cloud.databricks.com/
 # COMMAND ----------
 
 # DBTITLE 1,Basic Application
-!python3 app/basic_test_app.py
+!python3 basic_test_app.py
 
 # COMMAND ----------
 
 # DBTITLE 1,Chat Application
-!python3 app/chat_app.py
+!python3 chat_app.py
 
 # COMMAND ----------
 
 # DBTITLE 1,Chat To Docs App
-!python3 app/chat_to_docs_app.py
+!python3 chat_to_docs_app.py
 
 # COMMAND ----------
 
 # DBTITLE 1,Adv Chat To Docs App
-!python3 app/adv_chat_to_docs_app.py
+!python3 adv_chat_to_docs_app.py
 
 # COMMAND ----------
 
 # DBTITLE 1,Enhanced RAG
-!python3 app/expansion_and_rerank_app.py
+!python3 expansion_and_rerank_app.py
