@@ -19,7 +19,7 @@
 # COMMAND ----------
 
 # DBTITLE 1,Install Required Libraries
-# MAGIC %pip install -U mlflow>=3.0 openai databricks-sdk pydantic>=2.0
+# MAGIC %pip install -U mlflow>=3.0 openai databricks-sdk pydantic>=2.0 gepa litellm
 # MAGIC %restart_python
 
 # COMMAND ----------
@@ -69,6 +69,116 @@ print("✅ Imports complete")
 # COMMAND ----------
 
 # DBTITLE 1,Define Prompt-Optimized ResponsesAgent
+# MAGIC %md
+# MAGIC ## Adding Tools to the Agent
+# MAGIC
+# MAGIC The agent supports multiple tool types. Here's how to add them:
+# MAGIC
+# MAGIC ### 1. Unity Catalog Functions
+# MAGIC ```python
+# MAGIC from databricks_openai import UCFunctionToolkit
+# MAGIC from unitycatalog.ai.core.base import get_uc_function_client
+# MAGIC
+# MAGIC # Define UC function names
+# MAGIC UC_TOOL_NAMES = ["catalog.schema.function_name"]
+# MAGIC
+# MAGIC # Create toolkit and function client
+# MAGIC uc_toolkit = UCFunctionToolkit(function_names=UC_TOOL_NAMES)
+# MAGIC uc_function_client = get_uc_function_client()
+# MAGIC
+# MAGIC # Create ToolInfo objects
+# MAGIC uc_tools = []
+# MAGIC for tool_spec in uc_toolkit.tools:
+# MAGIC     tool_spec["function"].pop("strict", None)
+# MAGIC     tool_name = tool_spec["function"]["name"]
+# MAGIC     udf_name = tool_name.replace("__", ".")
+# MAGIC     
+# MAGIC     def exec_fn(**kwargs):
+# MAGIC         result = uc_function_client.execute_function(udf_name, kwargs)
+# MAGIC         return result.error if result.error else result.value
+# MAGIC     
+# MAGIC     uc_tools.append(ToolInfo(name=tool_name, spec=tool_spec, exec_fn=exec_fn))
+# MAGIC ```
+# MAGIC
+# MAGIC ### 2. Vector Search Tools
+# MAGIC ```python
+# MAGIC from databricks_openai import VectorSearchRetrieverTool
+# MAGIC
+# MAGIC # Create Vector Search tool
+# MAGIC vs_tool = VectorSearchRetrieverTool(
+# MAGIC     index_name="catalog.schema.index_name",
+# MAGIC     tool_description="Search through documents. Use this to find relevant information."
+# MAGIC )
+# MAGIC
+# MAGIC # Convert to ToolInfo
+# MAGIC vs_tool_info = ToolInfo(
+# MAGIC     name=vs_tool.tool["function"]["name"],
+# MAGIC     spec=vs_tool.tool,
+# MAGIC     exec_fn=vs_tool.execute
+# MAGIC )
+# MAGIC ```
+# MAGIC
+# MAGIC ### 3. Genie Space (via MCP)
+# MAGIC ```python
+# MAGIC from databricks_mcp import DatabricksMCPClient
+# MAGIC from databricks.sdk import WorkspaceClient
+# MAGIC import nest_asyncio
+# MAGIC nest_asyncio.apply()
+# MAGIC
+# MAGIC # Connect to Genie Space
+# MAGIC workspace_client = WorkspaceClient()
+# MAGIC genie_space_id = "01234567-89ab-cdef-0123-456789abcdef"  # Get from Genie > Settings
+# MAGIC genie_mcp_url = f"{workspace_client.config.host}/api/2.0/mcp/genie/{genie_space_id}"
+# MAGIC
+# MAGIC genie_client = DatabricksMCPClient(
+# MAGIC     server_url=genie_mcp_url,
+# MAGIC     workspace_client=workspace_client
+# MAGIC )
+# MAGIC
+# MAGIC # Get Genie tools
+# MAGIC genie_tools = []
+# MAGIC for tool in genie_client.list_tools():
+# MAGIC     tool_spec = {
+# MAGIC         "type": "function",
+# MAGIC         "function": {
+# MAGIC             "name": tool.name,
+# MAGIC             "description": tool.description or "Genie tool for data analysis",
+# MAGIC             "parameters": tool.inputSchema or {"type": "object", "properties": {}}
+# MAGIC         }
+# MAGIC     }
+# MAGIC     
+# MAGIC     def create_exec_fn(client, tool_name):
+# MAGIC         def exec_fn(**kwargs):
+# MAGIC             response = client.call_tool(tool_name, kwargs)
+# MAGIC             return response.content[0].text if response and response.content else ""
+# MAGIC         return exec_fn
+# MAGIC     
+# MAGIC     genie_tools.append(ToolInfo(
+# MAGIC         name=tool.name,
+# MAGIC         spec=tool_spec,
+# MAGIC         exec_fn=create_exec_fn(genie_client, tool.name)
+# MAGIC     ))
+# MAGIC ```
+# MAGIC
+# MAGIC ### 4. Pass Tools to Agent
+# MAGIC ```python
+# MAGIC # Combine all tools
+# MAGIC all_tools = uc_tools + [vs_tool_info] + genie_tools + [CALCULATOR_TOOL]
+# MAGIC
+# MAGIC # Create agent with tools
+# MAGIC agent = PromptOptimizedAgent(
+# MAGIC     llm_endpoint=LLM_ENDPOINT_NAME,
+# MAGIC     prompt_uri=f"prompts:/{PROMPT_NAME}/1",
+# MAGIC     tools=all_tools,
+# MAGIC     max_iter=10
+# MAGIC )
+# MAGIC ```
+# MAGIC
+# MAGIC For detailed examples, see `03_agents/04_responses_agent.py`
+
+# COMMAND ----------
+
+# DBTITLE 1,Tool Definition Classes
 class ToolInfo(BaseModel):
     """Tool specification for the agent"""
     name: str
@@ -81,11 +191,13 @@ class ToolInfo(BaseModel):
 
 class PromptOptimizedAgent(ResponsesAgent):
     """
-    ResponsesAgent that loads system prompt from MLflow Prompt Registry.
+    Tool-calling Agent with MLflow Prompt Registry integration.
     
-    This enables:
-    - Centralized prompt management
-    - Version control for prompts
+    Combines full ToolCallingAgent capabilities with prompt optimization:
+    - Multi-step tool execution with streaming
+    - Unity Catalog Functions, Vector Search, MCP tools support
+    - MLflow tracing for tool calls
+    - Dynamic prompt loading from registry
     - Runtime prompt updates without redeployment
     - A/B testing different prompts
     """
@@ -102,8 +214,8 @@ class PromptOptimizedAgent(ResponsesAgent):
         
         Args:
             llm_endpoint: Databricks model serving endpoint name
-            prompt_uri: MLflow prompt URI (e.g., 'prompts:/agent_system_prompt/1' or 'prompts:/agent_system_prompt/Champion')
-            tools: List of tools available to agent
+            prompt_uri: MLflow prompt URI (e.g., 'prompts:/name/1')
+            tools: List of ToolInfo objects (UC functions, Vector Search, MCP, etc.)
             max_iter: Maximum reasoning iterations
         """
         self.llm_endpoint = llm_endpoint
@@ -123,17 +235,16 @@ class PromptOptimizedAgent(ResponsesAgent):
         self._tools_dict = {tool.name: tool for tool in tools} if tools else {}
         
         print(f"✅ Agent initialized with prompt: {prompt_uri}")
-        print(f"   System prompt preview: {self._system_prompt[:100]}...")
+        print(f"   Tools: {len(self._tools_dict)}, Max iterations: {max_iter}")
     
     def _load_prompt(self) -> str:
         """Load prompt from MLflow registry"""
         try:
             prompt = mlflow.genai.load_prompt(self.prompt_uri)
-            # The loaded prompt object has a 'template' attribute
             return prompt.template if hasattr(prompt, 'template') else str(prompt)
         except Exception as e:
             print(f"⚠️ Error loading prompt: {e}")
-            return "You are a helpful AI assistant."
+            return "You are a helpful AI assistant that can use tools when needed."
     
     def reload_prompt(self):
         """
@@ -151,7 +262,7 @@ class PromptOptimizedAgent(ResponsesAgent):
     
     @mlflow.trace(span_type=SpanType.TOOL)
     def execute_tool(self, tool_name: str, args: dict) -> Any:
-        """Execute specified tool with arguments"""
+        """Execute specified tool with MLflow tracing"""
         return self._tools_dict[tool_name].exec_fn(**args)
     
     def call_llm(self, messages: list[dict[str, Any]]) -> Generator[dict[str, Any], None, None]:
@@ -173,7 +284,7 @@ class PromptOptimizedAgent(ResponsesAgent):
         tool_call: dict[str, Any],
         messages: list[dict[str, Any]],
     ) -> ResponsesAgentStreamEvent:
-        """Execute tool call and return result"""
+        """Execute tool call, add result to message history, return stream event"""
         args = json.loads(tool_call["arguments"])
         result = str(self.execute_tool(tool_name=tool_call["name"], args=args))
         
@@ -185,7 +296,7 @@ class PromptOptimizedAgent(ResponsesAgent):
         self,
         messages: list[dict[str, Any]],
     ) -> Generator[ResponsesAgentStreamEvent, None, None]:
-        """Main agent loop: call LLM, execute tools, iterate"""
+        """Main agent loop: call LLM, execute tools, iterate until completion"""
         for _ in range(self.max_iter):
             last_msg = messages[-1]
             
@@ -219,14 +330,14 @@ class PromptOptimizedAgent(ResponsesAgent):
     def predict_stream(
         self, request: ResponsesAgentRequest
     ) -> Generator[ResponsesAgentStreamEvent, None, None]:
-        """Streaming prediction with system prompt from registry"""
+        """Streaming prediction with prompt from registry"""
         # Convert input to messages
         if request.input and hasattr(request.input[0], 'model_dump'):
             messages = to_chat_completions_input([i.model_dump() for i in request.input])
         else:
             messages = to_chat_completions_input(request.input)
         
-        # Inject system prompt from registry
+        # Use prompt from registry
         if self._system_prompt:
             messages.insert(0, {"role": "system", "content": self._system_prompt})
         
@@ -403,46 +514,35 @@ print(f"   Format: inputs dict with 'inputs' key matching predict_fn parameter")
 
 # DBTITLE 1,Run GEPA Prompt Optimization
 # Define predict function that GEPA will use to evaluate prompts
-def predict_fn(inputs: dict, **kwargs) -> dict:
+def predict_fn(inputs: dict, **kwargs) -> str:
     """
     Prediction function for GEPA optimization.
     GEPA will pass the prompt being tested via kwargs.
     """
     messages = inputs["messages"]
     
-    # GEPA passes the prompt name in kwargs
-    # Load the specific prompt version being tested
+    # GEPA passes the prompt being tested in kwargs
     prompt_to_use = kwargs.get(PROMPT_NAME)
     
     if prompt_to_use:
-        # GEPA is testing a specific prompt - use it directly as system message
         system_prompt = prompt_to_use.template if hasattr(prompt_to_use, 'template') else str(prompt_to_use)
     else:
-        # Fallback: load from registry
-        try:
-            prompt_versions = client.search_prompt_versions(name=f"{PROMPT_NAME}")
-            if prompt_versions.prompt_versions:
-                latest_version = sorted(prompt_versions.prompt_versions, key=lambda pv: pv.version, reverse=True)[0].version
-                prompt_uri = f"prompts:/{PROMPT_NAME}/{latest_version}"
-            else:
-                prompt_uri = f"prompts:/{PROMPT_NAME}/1"
-            loaded_prompt = mlflow.genai.load_prompt(prompt_uri)
-            system_prompt = loaded_prompt.template if hasattr(loaded_prompt, 'template') else str(loaded_prompt)
-        except Exception:
-            system_prompt = "You are a helpful AI assistant."
+        # Fallback: load latest from registry
+        prompt_versions = client.search_prompt_versions(name=f"{PROMPT_NAME}")
+        if prompt_versions.prompt_versions:
+            latest_version = sorted(prompt_versions.prompt_versions, key=lambda pv: pv.version, reverse=True)[0].version
+            loaded_prompt = mlflow.genai.load_prompt(f"prompts:/{PROMPT_NAME}/{latest_version}")
+        else:
+            loaded_prompt = mlflow.genai.load_prompt(f"prompts:/{PROMPT_NAME}/1")
+        system_prompt = loaded_prompt.template if hasattr(loaded_prompt, 'template') else str(loaded_prompt)
     
-    # Create a simplified agent that uses the prompt directly
-    # Instead of using PromptOptimizedAgent, use OpenAI client directly
+    # Call LLM with the prompt
     workspace_client = WorkspaceClient()
     model_serving_client = workspace_client.serving_endpoints.get_open_ai_client()
     
-    # Prepare messages with the system prompt
     chat_messages = [{"role": "system", "content": system_prompt}] + messages
-    
-    # Get tools specs
     tools_spec = [CALCULATOR_TOOL.spec] if CALCULATOR_TOOL else None
     
-    # Call LLM
     response = model_serving_client.chat.completions.create(
         model=LLM_ENDPOINT_NAME,
         messages=chat_messages,
@@ -450,43 +550,40 @@ def predict_fn(inputs: dict, **kwargs) -> dict:
         temperature=0.1
     )
     
-    # Extract response text
     output_text = response.choices[0].message.content or ""
     
-    # Handle tool calls if present
+    # Handle tool calls
     if response.choices[0].message.tool_calls:
         for tool_call in response.choices[0].message.tool_calls:
-            tool_name = tool_call.function.name
             tool_args = json.loads(tool_call.function.arguments)
-            if tool_name == "calculator":
+            if tool_call.function.name == "calculator":
                 result = CALCULATOR_TOOL.exec_fn(**tool_args)
-                output_text += f" (Calculated: {result})"
+                output_text += f" {result}"
     
-    return {"response": output_text}
+    return output_text
 
 
 # Run GEPA optimization
 print("🚀 Starting GEPA optimization...")
-print("   This will test different prompt variations to find the best one")
-print("")
+print("   This will test different prompt variations to find the best one\n")
+
+# Configure logging
+import logging
+logging.getLogger("py4j").setLevel(logging.ERROR)
+logging.getLogger("databricks.sdk.config").setLevel(logging.ERROR)
+warnings.filterwarnings('ignore', message='.*must be real number, not str.*')
 
 try:
-    # For GEPA, pass just the prompt name (not full URI)
-    # GEPA will create and test new versions automatically
-    print(f"   Optimizing prompt: {PROMPT_NAME}")
-    
     optimization_results = optimize_prompts(
         predict_fn=predict_fn,
         train_data=training_data,
-        prompt_uris=[PROMPT_NAME],  # Just the prompt name, not full URI
+        prompt_uris=[PROMPT_NAME],
         optimizer=GepaPromptOptimizer(
             reflection_model=f"databricks:/{LLM_ENDPOINT_NAME}",
-            max_metric_calls=50  # Number of optimization iterations
+            max_metric_calls=50
         ),
         scorers=[
-            Correctness(
-                model=f"databricks:/{LLM_ENDPOINT_NAME}"
-            )
+            Correctness(model=f"databricks:/{LLM_ENDPOINT_NAME}")
         ]
     )
     
@@ -494,26 +591,27 @@ try:
     print("✅ GEPA Optimization Complete!")
     print("="*60)
     
-    # Access optimized prompts from results
+    # Display optimized prompt
     if hasattr(optimization_results, 'optimized_prompts') and optimization_results.optimized_prompts:
-        optimized_prompt_info = optimization_results.optimized_prompts[0]
-        print(f"\nOptimized prompt URI: {optimized_prompt_info}")
+        optimized_prompt_version = optimization_results.optimized_prompts[0]
+        prompt_name = optimized_prompt_version.name
+        prompt_version = optimized_prompt_version.version
+        optimized_prompt_uri = f"prompts:/{prompt_name}/{prompt_version}"
+        
+        print(f"\nOptimized prompt: {optimized_prompt_uri}")
         
         # Load and display the optimized prompt
-        optimized_prompt = mlflow.genai.load_prompt(optimized_prompt_info)
+        optimized_prompt = mlflow.genai.load_prompt(optimized_prompt_uri)
         prompt_text = optimized_prompt.template if hasattr(optimized_prompt, 'template') else str(optimized_prompt)
-        print(f"\nOptimized prompt:\n{prompt_text}")
+        print(f"\nOptimized prompt text:\n{prompt_text[:500]}...")
     else:
         print("\n⚠️ No optimized prompts returned")
     
-    # Display metrics if available
-    if hasattr(optimization_results, 'metrics'):
-        print(f"\nOptimization metrics: {optimization_results.metrics}")
-    
 except Exception as e:
-    print(f"\n⚠️ Optimization error: {e}")
-    print("This may happen if the model endpoint is busy or if there are API issues.")
-    print("The agent will still work with the seed prompt.")
+    print(f"\n❌ Optimization failed: {e}")
+    import traceback
+    traceback.print_exc()
+    print("\nThe agent will still work with the seed prompt.")
 
 # COMMAND ----------
 
@@ -538,76 +636,44 @@ except Exception as e:
 # COMMAND ----------
 
 # DBTITLE 1,Test Optimized Agent
-# Create agent with optimized prompt (or seed if optimization failed)
-# Get the latest version dynamically
-
-try:
-    prompt_versions = client.search_prompt_versions(name=f"{PROMPT_NAME}")
-    if prompt_versions.prompt_versions:
-        latest_version = sorted(prompt_versions.prompt_versions, key=lambda pv: pv.version, reverse=True)[0].version
-        production_prompt_uri = f"prompts:/{PROMPT_NAME}/{latest_version}"
-    else:
-        production_prompt_uri = f"prompts:/{PROMPT_NAME}/1"
-except Exception:
-    # Fallback if we can't query versions
+# Get the latest prompt version
+prompt_versions = client.search_prompt_versions(name=f"{PROMPT_NAME}")
+if prompt_versions.prompt_versions:
+    latest_version = sorted(prompt_versions.prompt_versions, key=lambda pv: pv.version, reverse=True)[0].version
+    production_prompt_uri = f"prompts:/{PROMPT_NAME}/{latest_version}"
+else:
     production_prompt_uri = f"prompts:/{PROMPT_NAME}/1"
 
-print(f"Using prompt: {production_prompt_uri}")
+print(f"Using prompt: {production_prompt_uri}\n")
 
+# Create agent with optimized prompt
 production_agent = PromptOptimizedAgent(
     llm_endpoint=LLM_ENDPOINT_NAME,
-    prompt_uri=production_prompt_uri,  # Use specific version
+    prompt_uri=production_prompt_uri,
     tools=[CALCULATOR_TOOL],
     max_iter=10
 )
 
-print("\n" + "="*60)
-print("Testing production agent with optimized prompt")
-print("="*60)
+# Test agent
+print("💬 User: What is 456 plus 789?")
 
-# Test with math question
 test_request = ResponsesAgentRequest(
     input=[{"role": "user", "content": "What is 456 plus 789?"}]
 )
-
 response = production_agent.predict(test_request)
 
 # Print response
-print("\n💬 User: What is 456 plus 789?")
 for item in response.output:
-    if isinstance(item, dict):
-        item_dict = item
-    elif hasattr(item, 'model_dump'):
-        item_dict = item.model_dump()
-    else:
-        item_dict = vars(item)
-    
+    item_dict = item.model_dump() if hasattr(item, 'model_dump') else item
     if item_dict.get("type") == "message":
         content = item_dict.get('content', '')
         if isinstance(content, list):
-            text_parts = [
-                part.get('text', '') 
-                for part in content 
-                if isinstance(part, dict) and part.get('type') == 'output_text'
-            ]
-            content = ''.join(text_parts)
+            content = ''.join([p.get('text', '') for p in content if p.get('type') == 'output_text'])
         print(f"🤖 Assistant: {content}")
     elif item_dict.get("type") == "function_call":
-        print(f"🔧 Tool Call: {item_dict.get('name')}({item_dict.get('arguments')})")
+        print(f"🔧 Tool: {item_dict.get('name')}({item_dict.get('arguments')})")
 
-# Demonstrate runtime prompt reload
-print("\n" + "="*60)
-print("Prompt Reload Capability")
-print("="*60)
-print("In production, you can update the prompt without redeploying:")
-print("1. Optimize new prompt version with GEPA")
-print("2. Call agent.reload_prompt() to pick up changes")
-print("3. No service restart needed!")
-
-# Example: reload prompt (will be same unless new version created)
-production_agent.reload_prompt()
-
-print("\n✅ Production agent ready for deployment!")
+print("\n✅ Agent ready! You can reload prompts anytime with: agent.reload_prompt()")
 
 # COMMAND ----------
 
