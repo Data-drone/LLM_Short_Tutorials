@@ -261,9 +261,9 @@ if MCP_CONNECTIONS:
                     def exec_fn(**kwargs):
                         response = client.call_tool(tool_name, kwargs)
                         # Extract text from response
-                        if response.content:
+                        if response and response.content:
                             return response.content[0].text
-                        return str(response)
+                        return str(response) if response else "No response from tool"
                     return exec_fn
                 
                 # Add to tool list
@@ -372,9 +372,9 @@ if GENIE_SPACE_IDS or OTHER_MANAGED_MCP_URLS:
                         def exec_fn(**kwargs):
                             response = client.call_tool(tool_name, kwargs)
                             # Extract text from response
-                            if response.content:
+                            if response and response.content:
                                 return response.content[0].text
-                            return str(response)
+                            return str(response) if response else "No response from tool"
                         return exec_fn
                     
                     # Add to tool list
@@ -422,9 +422,9 @@ if GENIE_SPACE_IDS or OTHER_MANAGED_MCP_URLS:
                         """Factory to create tool execution function"""
                         def exec_fn(**kwargs):
                             response = client.call_tool(tool_name, kwargs)
-                            if response.content:
+                            if response and response.content:
                                 return response.content[0].text
-                            return str(response)
+                            return str(response) if response else "No response from tool"
                         return exec_fn
                     
                     TOOL_INFOS.append(
